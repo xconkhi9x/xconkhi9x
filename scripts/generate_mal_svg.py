@@ -167,7 +167,7 @@ def generate_svg(data):
             <g>
               {img_tag}
               <text x="65" y="{y_cursor + 15}" font-size="13" font-weight="600" fill="#c9d1d9">{title_disp}</text>
-              <text x="65" y="{y_cursor + 32}" font-size="11" fill="#8b949e">{escape(u["status"])} &bull; {ep_text}</text>
+              <text x="65" y="{y_cursor + 32}" font-size="11" fill="#8b949e">{escape(u["status"])} • {ep_text}</text>
               {score_badge}
             </g>
             """
