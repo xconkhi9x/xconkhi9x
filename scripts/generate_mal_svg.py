@@ -17,6 +17,17 @@ def clean_title_from_url(path):
         return urllib.parse.unquote(slug).replace("_", " ")
     return "Anime"
 
+def fetch_b64(url):
+    if not url:
+        return ""
+    try:
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            return "data:image/jpeg;base64," + base64.b64encode(resp.read()).decode("utf-8")
+    except Exception as e:
+        print(f"Error fetching {url}: {e}")
+        return ""
+
 def fetch_data():
     req = urllib.request.Request(USER_URL, headers=HEADERS)
     with urllib.request.urlopen(req, timeout=15) as resp:
@@ -34,7 +45,7 @@ def fetch_data():
     plantowatch = extract(r'animelist/' + USERNAME + r'\?status=6\"[^>]*>Plan to Watch</a><span[^>]*>([\d,]+)', "0")
     episodes = extract(r"Episodes</span><span[^>]*>([\d,]+)", "0")
 
-    # Watching this season
+    # 1. Watching This Season (up to 6)
     season_items = []
     idx_season = page_html.find("Watching this season")
     end_season = page_html.find("Last completed anime")
@@ -43,50 +54,48 @@ def fetch_data():
         matches = re.findall(r'<li class="l-listitem-list-item">\s*<a href="([^"]+)">\s*<img src="([^"]+)"', sec)
         for link, img_url in matches[:6]:
             title = clean_title_from_url(link)
-            b64_img = ""
-            try:
-                ireq = urllib.request.Request(img_url, headers=HEADERS)
-                with urllib.request.urlopen(ireq, timeout=8) as iresp:
-                    b64_img = "data:image/jpeg;base64," + base64.b64encode(iresp.read()).decode("utf-8")
-            except Exception as e:
-                print(f"Error img: {e}")
+            b64_img = fetch_b64(img_url)
             season_items.append({
                 "title": title,
                 "b64_img": b64_img,
                 "url": f"https://myanimelist.net{link}"
             })
 
-    # Last anime updates
-    anime_sec = page_html.split('class="updates anime"')[1].split('class="updates manga"')[0] if 'class="updates anime"' in page_html else ""
-    blocks = re.findall(r'<div class="statistics-updates di-b w100 mb8">(.*?)</div>\s*</div>\s*</div>', anime_sec, re.DOTALL)
+    # Helper for parsing Favorites
+    def parse_favs(sec_id):
+        m = re.search(r'id="' + sec_id + r'">(.*?)</ul>', page_html, re.DOTALL)
+        if not m:
+            return []
+        items = []
+        raw_items = re.findall(r'<li class="btn-fav" title="([^"]+)">(.*?)</li>', m.group(1), re.DOTALL)
+        for title, b in raw_items:
+            img_m = re.search(r'data-src="([^"]+)"', b)
+            sub_m = re.search(r'<span class="users">([^<]+)</span>', b)
+            items.append({
+                "title": title,
+                "img_url": img_m.group(1) if img_m else None,
+                "sub": sub_m.group(1).replace("&middot;", "·") if sub_m else ""
+            })
+        return items
 
-    updates = []
-    for b in blocks[:2]:
-        img_m = re.search(r'data-src="([^"]+)"', b)
-        title_m = re.search(r'<a href="https://myanimelist\.net/anime/\d+/[^"]+">([^<]+)</a>', b)
-        eps_m = re.search(r'<span class="text anime [^"]+">(\d+)</span>/(\d+|\?)', b)
-        score_m = re.search(r'Scored\s*<span[^>]*>(\d+)</span>', b)
+    # 2. Favorites - Anime (take top 6)
+    fav_animes_raw = parse_favs("anime_favorites")
+    fav_animes = []
+    for a in fav_animes_raw[:6]:
+        fav_animes.append({
+            "title": a["title"],
+            "sub": a["sub"],
+            "b64_img": fetch_b64(a["img_url"])
+        })
 
-        title = title_m.group(1).strip() if title_m else "Unknown"
-        img_url = img_m.group(1) if img_m else None
-        curr_ep = eps_m.group(1) if eps_m else "?"
-        tot_ep = eps_m.group(2) if eps_m else "?"
-        score = score_m.group(1) if score_m else None
-
-        b64_img = ""
-        if img_url:
-            try:
-                ireq = urllib.request.Request(img_url, headers=HEADERS)
-                with urllib.request.urlopen(ireq, timeout=8) as iresp:
-                    b64_img = "data:image/jpeg;base64," + base64.b64encode(iresp.read()).decode("utf-8")
-            except Exception as e:
-                print(f"Error img: {e}")
-
-        updates.append({
-            "title": title,
-            "b64_img": b64_img,
-            "progress": f"{curr_ep}/{tot_ep}",
-            "score": score
+    # 3. Favorites - Characters (take up to 9)
+    fav_chars_raw = parse_favs("character_favorites")
+    fav_chars = []
+    for c in fav_chars_raw[:9]:
+        fav_chars.append({
+            "title": c["title"],
+            "sub": c["sub"],
+            "b64_img": fetch_b64(c["img_url"])
         })
 
     return {
@@ -98,11 +107,12 @@ def fetch_data():
         "plantowatch": plantowatch,
         "episodes": episodes,
         "season_items": season_items,
-        "updates": updates
+        "fav_animes": fav_animes,
+        "fav_chars": fav_chars
     }
 
 def render_svg(data):
-    # exact CSS styles and layout from lowlighter/metrics classic template
+    # Season section (posters)
     season_html = ""
     for item in data["season_items"]:
         title_disp = escape(item["title"])
@@ -115,23 +125,37 @@ def render_svg(data):
         </div>
         """
 
-    updates_html = ""
-    for u in data["updates"]:
-        score_span = f'<span style="color:#e3b341; margin-left:12px; font-weight:600;">★ {u["score"]}</span>' if u["score"] else ""
-        updates_html += f"""
-        <div class="media" style="display:flex; align-items:center; margin-bottom:10px; width:450px;">
-            <img src="{u['b64_img']}" width="38" height="54" style="border-radius:6px; object-fit:cover; margin-right:12px;" alt="" />
-            <div class="about" style="flex-grow:1; min-width:0;">
-                <div class="name" style="font-size:13px; font-weight:600; color:#58a6ff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:390px;">{escape(u['title'])}</div>
-                <div class="infos" style="font-size:12px; color:#8b949e; margin-top:3px; display:flex; align-items:center;">
-                    <span>Watching • Episode {escape(u['progress'])}</span>
-                    {score_span}
-                </div>
-            </div>
+    # Favorites - Anime (grid / row of posters with title & year)
+    fav_anime_html = ""
+    for item in data["fav_animes"]:
+        title_disp = escape(item["title"])
+        if len(title_disp) > 13:
+            title_disp = title_disp[:12] + "…"
+        sub_disp = escape(item["sub"])
+        if len(sub_disp) > 13:
+            sub_disp = sub_disp[:12] + "…"
+        fav_anime_html += f"""
+        <div style="display:flex; flex-direction:column; align-items:center; width:64px; margin:0 4px;">
+            <img src="{item['b64_img']}" width="60" height="85" style="border-radius:6px; object-fit:cover; box-shadow:0 2px 6px rgba(0,0,0,0.4);" alt="" />
+            <span style="font-size:10px; font-weight:600; color:#58a6ff; margin-top:5px; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; width:64px;">{title_disp}</span>
+            <span style="font-size:9px; color:#8b949e; margin-top:1px; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; width:64px;">{sub_disp}</span>
         </div>
         """
 
-    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="480" height="385" class="">
+    # Favorites - Characters (compact grid with round/curved avatars like lowlighter)
+    fav_char_html = ""
+    for c in data["fav_chars"]:
+        c_title = escape(c["title"])
+        fav_char_html += f"""
+        <div style="display:inline-block; margin:3px 5px;" title="{c_title}">
+            <img src="{c['b64_img']}" width="40" height="58" style="border-radius:6px; object-fit:cover; box-shadow:0 2px 5px rgba(0,0,0,0.4);" alt="{c_title}" />
+        </div>
+        """
+
+    card_width = 480
+    card_height = 515
+
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{card_width}" height="{card_height}" class="">
     <defs>
         <style/>
     </defs>
@@ -172,20 +196,16 @@ def render_svg(data):
         .fill-width {{
             width: 100%;
         }}
-        .anilist {{
+        .characters {{
             display: flex;
-            flex-direction: column;
-            align-items: flex-start;
-            margin-left: 28px;
+            flex-wrap: wrap;
+            margin-left: 20px;
             margin-top: 4px;
-        }}
-        :root {{
-            --color-text-primary: #58a6ff;
-            --color-text-secondary: #8b949e;
         }}
     </style>
     <foreignObject x="0" y="0" width="100%" height="100%">
         <div xmlns="http://www.w3.org/1999/xhtml" xmlns:xlink="http://www.w3.org/1999/xlink" class="items-wrapper">
+            <!-- Header Stats -->
             <section>
                 <h2 class="field">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
@@ -224,7 +244,9 @@ def render_svg(data):
                     </section>
                 </div>
             </section>
-            <section style="margin-top:14px;">
+
+            <!-- 1. Watching This Season -->
+            <section style="margin-top:12px;">
                 <h2 class="field">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
                         <path fill-rule="evenodd" d="M1.5 3A1.5 1.5 0 000 4.5v7A1.5 1.5 0 001.5 13h13a1.5 1.5 0 001.5-1.5v-7A1.5 1.5 0 0014.5 3h-13zm0 1.5h13a.5.5 0 01.5.5v7a.5.5 0 01-.5.5h-13a.5.5 0 01-.5-.5v-7a.5.5 0 01.5-.5z"/>
@@ -235,15 +257,30 @@ def render_svg(data):
                     {season_html}
                 </div>
             </section>
-            <section style="margin-top:8px;">
+
+            <!-- 2. Favorites Anime -->
+            <section style="margin-top:4px;">
                 <h2 class="field">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
-                        <path fill-rule="evenodd" d="M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13zM0 8a8 8 0 1116 0A8 8 0 010 8zm9 3a1 1 0 11-2 0 1 1 0 012 0zm-.25-6.25a.75.75 0 00-1.5 0v3.5a.75.75 0 001.5 0v-3.5z"/>
+                        <path fill-rule="evenodd" d="M7.655 14.916v-.001h-.002l-.006-.003-.018-.01a22.066 22.066 0 01-3.744-2.584C2.045 10.731 0 8.35 0 5.5 0 2.836 2.086 1 4.75 1a4.524 4.524 0 013.25 1.39A4.524 4.524 0 0111.25 1c2.664 0 4.75 1.836 4.75 4.5 0 2.849-2.045 5.231-3.885 6.818a22.08 22.08 0 01-3.744 2.584l-.018.01-.006.003h-.002v.001a.752.752 0 01-.69 0z"/>
                     </svg>
-                    Recent updates
+                    Favorites anime
                 </h2>
-                <div class="anilist" style="margin-left:14px; margin-top:6px;">
-                    {updates_html}
+                <div style="display:flex; justify-content:space-between; margin:8px 0 12px 14px; width:450px;">
+                    {fav_anime_html}
+                </div>
+            </section>
+
+            <!-- 3. Favorites Characters -->
+            <section style="margin-top:4px;">
+                <h2 class="field">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+                        <path d="M10.561 8.073a6.005 6.005 0 013.432 5.142.75.75 0 11-1.498.07 4.5 4.5 0 00-8.99 0 .75.75 0 01-1.498-.07 6.004 6.004 0 013.431-5.142 3.999 3.999 0 115.123 0zM10.5 5a2.5 2.5 0 10-5 0 2.5 2.5 0 005 0z"/>
+                    </svg>
+                    Favorites characters
+                </h2>
+                <div class="characters">
+                    {fav_char_html}
                 </div>
             </section>
         </div>
@@ -253,7 +290,7 @@ def render_svg(data):
 
     with open("myanimelist.svg", "w", encoding="utf-8") as f:
         f.write(svg)
-    print("Rendered exact lowlighter/metrics style SVG successfully!")
+    print("Rendered exact lowlighter/metrics style SVG with Watching season, Favorites anime, and Favorites characters!")
 
 if __name__ == "__main__":
     d = fetch_data()
