@@ -5,11 +5,11 @@
 <br/><br/>
 
 <a href="https://myanimelist.net/profile/HaribeatbreX">
-  <img src="myanimelist.svg" alt="MyAnimeList Activity" />
+  <img src="https://raw.githubusercontent.com/xconkhi9x/xconkhi9x/main/myanimelist.svg" alt="MyAnimeList Activity" />
 </a>
 
 <br/><br/>
 
-<img src="github-metrics.svg" alt="Isometric Commit Calendar" />
+<img src="https://raw.githubusercontent.com/xconkhi9x/xconkhi9x/main/github-metrics.svg" alt="Isometric Commit Calendar" />
 
 </div>
