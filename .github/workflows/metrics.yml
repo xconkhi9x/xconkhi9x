@@ -1,0 +1,26 @@
+name: Metrics
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+  push:
+    branches: ["main", "master"]
+
+jobs:
+  github-metrics:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: lowlighter/metrics@latest
+        with:
+          token: ${{ secrets.METRICS_TOKEN || secrets.GITHUB_TOKEN }}
+          user: xconkhi9x
+          template: classic
+          base: ""
+          config_timezone: Asia/Saigon
+          plugin_isocalendar: yes
+          plugin_isocalendar_duration: half-year
+          output_action: commit
+          committer_message: "chore: update metrics"
+          filename: github-metrics.svg
